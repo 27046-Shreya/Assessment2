@@ -4,6 +4,7 @@ using BoilerApplication.Controller;
 using BoilerApplication.Model;
 using BoilerApplication.Repository;
 using BoilerApplication.Service;
+using BoilerApplication.View;
 
 namespace BoilerApplication;
 
@@ -21,7 +22,9 @@ public class Program
         LoggingService loggingService = new LoggingService(service, LogRepository);
         loggingService.SubscribeLogging();
 
-        BoilerController boilerController = new BoilerController(service, notificationService, loggingService);
+        BoilerDashboardView view = new BoilerDashboardView();
+
+        BoilerController boilerController = new BoilerController(service, notificationService, loggingService, view);
         boilerController.Initialize();
 
         boilerController.HandleUserMenu();

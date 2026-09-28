@@ -16,6 +16,7 @@ public class BoilerService
     private object _lock = new object();
     private bool _isReady = false;
     private bool _canStart = false;
+    private bool _isRunning = true;
 
     public BoilerService(Boiler boiler)
     {
@@ -147,27 +148,37 @@ public class BoilerService
         PeriodicTimer timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationTokenSource.Token))
+            if(_isRunning)
             {
-                lock (_lock)
+                while (await timer.WaitForNextTickAsync(cancellationTokenSource.Token))
                 {
-                    if (_boiler.BoilerState == BoilerState.Ready && _boiler.ToggleState == ToggleState.Close)
+                    lock (_lock)
                     {
-                        _isReady = true;
+                        if (_boiler.BoilerState == BoilerState.Ready && _boiler.ToggleState == ToggleState.Close)
+                        {
+                            _isReady = true;
+                        }
+                    }
+
+                    if (_canStart)
+                    {
+                        await PerformBoilerSequence(cancellationTokenSource.Token);
+                        _canStart = false;
                     }
                 }
-                
-                if (_canStart)
-                {
-                    await PerformBoilerSequence(cancellationTokenSource.Token);
-                    _canStart = false;
-                }
             }
+            else
+            {
+                throw new OperationCanceledException();
+            }
+            
         }
         catch (OperationCanceledException ex)
         {
             BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, ex.Message));
             Restart();
+            _canStart = false;
+
         }
 
     }
