@@ -1,6 +1,7 @@
 ﻿using BoilerApplication.EventArguments;
 using BoilerApplication.Model;
 using BoilerApplication.Enums;
+using System.Runtime.CompilerServices;
 
 namespace BoilerApplication.Service;
 
@@ -11,7 +12,7 @@ public class BoilerService
 {
     public event EventHandler<BoilerEventArgs>? BoilerEventHandler;
     private readonly Boiler _boiler;
-    private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+    private CancellationTokenSource? _currentCancelToken;
     private object _lock = new object();
     private bool _isReady = false;
     private bool _canStart = false;
@@ -30,13 +31,18 @@ public class BoilerService
         }
 
         BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Boiler Controller Initialized"));
+        BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Toggle to reach ready state"));
     }
 
-    public void ResetInterLock()
+    public void ResetLockout()
     {
         string message = string.Empty;
         lock (_lock)
         {
+            if (_boiler.BoilerState == BoilerState.Lockout && _boiler.ToggleState == ToggleState.Open)
+            {
+                message = "Toggle to reset the lockout and reach ready state";
+            }
             if (_boiler.BoilerState == BoilerState.Lockout && _boiler.ToggleState == ToggleState.Close)
             {
                 _boiler.BoilerState = BoilerState.Ready;
@@ -76,6 +82,15 @@ public class BoilerService
     {
         lock (_lock)
         {
+            if (_boiler.BoilerState == BoilerState.Lockout && _boiler.ToggleState == ToggleState.Open)
+            {
+                BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"In {BoilerState.Lockout} state, ToggleState: {ToggleState.Open} Toggle to close and reset."));
+            }
+            else if (_boiler.BoilerState == BoilerState.Lockout && _boiler.ToggleState == ToggleState.Close)
+            {
+                BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"In {BoilerState.Lockout} state, Reset to attain ready and then start the sequence."));
+            }
+
             if (_isReady)
             {
                 _canStart = true;
@@ -85,17 +100,46 @@ public class BoilerService
 
     public void SimulateError()
     {
-        lock (_lock)
+        if(_boiler.BoilerState == BoilerState.Operational)
         {
-            _boiler.BoilerState = BoilerState.Lockout;
-            _boiler.ToggleState = ToggleState.Close;
+            lock (_lock)
+            {
+                _boiler.BoilerState = BoilerState.Lockout;
+                _boiler.ToggleState = ToggleState.Close;
+            }
+            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"Error:Try to simulate error. System in Lockout"));
         }
-        BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"Error:Try to simulate error. System in Lockout"));
+        else
+        {
+            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"Simulated is disabled at {_boiler.BoilerState}"));
+        }
+        
     }
 
-    public async Task StartBoiler()
+    public void Stop()
     {
-        await ProcessBoilerAsync(new CancellationTokenSource());
+        lock (_lock)
+        {
+            if(_boiler.BoilerState != BoilerState.Ready || _boiler.BoilerState != BoilerState.Lockout)
+            {
+                if(_currentCancelToken  != null)
+                {
+                    _currentCancelToken.Cancel();
+                }
+                
+                _boiler.BoilerState = BoilerState.Ready;
+            }
+            else
+            {
+                BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, $"Process have not started. Press start to stop the application."));
+            }
+        }
+    }
+
+    public async Task StartBoiler(CancellationTokenSource cancellationTokenSource)
+    {
+        _currentCancelToken = cancellationTokenSource;
+        await ProcessBoilerAsync(cancellationTokenSource);
     }
 
     private async Task ProcessBoilerAsync(CancellationTokenSource cancellationTokenSource)
@@ -105,51 +149,59 @@ public class BoilerService
         {
             while (await timer.WaitForNextTickAsync(cancellationTokenSource.Token))
             {
+                lock (_lock)
+                {
+                    if (_boiler.BoilerState == BoilerState.Ready && _boiler.ToggleState == ToggleState.Close)
+                    {
+                        _isReady = true;
+                    }
+                }
+                
                 if (_canStart)
                 {
                     await PerformBoilerSequence(cancellationTokenSource.Token);
+                    _canStart = false;
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Operation stopped! Changing the boiler state from Pre-Purge to ready"));
+            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, ex.Message));
+            Restart();
         }
 
     }
 
+    public void Restart()
+    {
+        Task.Run(() => StartBoiler(new CancellationTokenSource()));
+    }
+
     private async Task PerformBoilerSequence(CancellationToken cancellationToken)
     {
-        if (!cancellationToken.IsCancellationRequested)
+        lock (_lock)
         {
-            lock (_lock)
-            {
-                _boiler.BoilerState = BoilerState.PrePurge;
-            }
-            await PerformPrePurge(cancellationToken);
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Pre-Purge completed"));
-
-            lock (_lock)
-            {
-                _boiler.BoilerState = BoilerState.Ignition;
-            }
-            await PerformIgnition(cancellationToken);
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Ignition phase completed"));
-
-            lock(_lock)
-            {
-                _boiler.BoilerState = BoilerState.Operational;
-            }
-
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Boiler now operational"));
+            _boiler.BoilerState = BoilerState.PrePurge;
         }
-        else
+        await PerformPrePurge(cancellationToken);
+        BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Pre-Purge completed"));
+
+        lock (_lock)
         {
-            lock(_lock)
-            {
-                _boiler.BoilerState = BoilerState.Ready;
-            }
+            _boiler.BoilerState = BoilerState.Ignition;
         }
+        await PerformIgnition(cancellationToken);
+        BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Ignition phase completed"));
+
+
+        lock (_lock)
+        {
+            _boiler.BoilerState = BoilerState.Operational;
+        }
+
+        BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Boiler now operational"));
+
+
     }
 
     private async Task PerformPrePurge(CancellationToken cancellationToken)
@@ -158,16 +210,14 @@ public class BoilerService
         {
             await Task.Delay(10000, cancellationToken);
         }
-        catch(OperationCanceledException)
+        catch (OperationCanceledException)
         {
-            lock(_lock)
+            lock (_lock)
             {
                 _boiler.BoilerState = BoilerState.Ready;
             }
-
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Operation stopped! Changing the boiler state from Pre-Purge to ready"));
-        }
-        
+            throw new OperationCanceledException($"Operation stopped at {BoilerState.PrePurge} state. Currently in {BoilerState.Ready} state. ");
+        } 
     }
 
     private async Task PerformIgnition(CancellationToken cancellationToken)
@@ -182,10 +232,7 @@ public class BoilerService
             {
                 _boiler.BoilerState = BoilerState.Ready;
             }
-
-            BoilerEventHandler?.Invoke(this, new BoilerEventArgs(_boiler.BoilerState, _boiler.ToggleState, "Operation stopped! Changing the boiler state from Ignition to ready"));
+            throw new OperationCanceledException($"Operation stopped at {BoilerState.Ignition} state. Currently in {BoilerState.Ready} state. ");
         }
-
     }
-
 }

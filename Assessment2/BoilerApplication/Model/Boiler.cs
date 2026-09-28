@@ -16,8 +16,6 @@ public class Boiler
     public Boiler(Guid id)
     {
         this.BoilerID = id;
-        this.BoilerState = boilerState;
-        this.ToggleState = toggleState;
     }
     public Guid BoilerID { get; init; }
 

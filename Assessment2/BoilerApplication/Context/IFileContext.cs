@@ -14,6 +14,6 @@ public interface IFileContext<T>
     /// <summary>
     /// Writes the content into the file.
     /// </summary>
-    /// <param name="listToWrite">List of instances to be written into the file.</param>
-    public void WriteToFile(List<T> listToWrite);
+    /// <param name="writeInstance">instance to be written into the file</param>
+    public void WriteToFile(T writeInstance);
 }

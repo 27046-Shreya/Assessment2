@@ -20,13 +20,13 @@ public class NotificationService
         this.boilerService.BoilerEventHandler += NotifyUser;
     }
 
-    public void UnsubscribeLogging()
+    public void UnsubscribeNotification()
     {
         this.boilerService.BoilerEventHandler -= NotifyUser;
     }
 
     private void NotifyUser(object? sender, BoilerEventArgs boilerEvent)
     {
-        NotificationEventHandler?.Invoke(this, new NotificationEventArgs("", DateTime.Now));
+        NotificationEventHandler?.Invoke(this, new NotificationEventArgs(boilerEvent.EventDescription, DateTime.Now));
     }
 }
