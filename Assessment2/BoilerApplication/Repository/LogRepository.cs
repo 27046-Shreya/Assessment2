@@ -8,21 +8,21 @@ namespace BoilerApplication.Repository;
 /// </summary>
 public class LogRepository
 {
-    private readonly IFileContext<BoilerEventLog> _fileContext;
+    private readonly IFileContext<string> _fileContext;
 
-    public LogRepository(IFileContext<BoilerEventLog> fileContext)
+    public LogRepository(IFileContext<string> fileContext)
     {
         this._fileContext = fileContext;
     }
 
-    public List<BoilerEventLog> ReadLogs()
+    public List<string> ReadLogs()
     {
         return this._fileContext.ReadFromFile();
     }
 
     public void WriteLog(BoilerEventLog log)
     {
-        this._fileContext.WriteToFile(new List<BoilerEventLog> { log });
+        this._fileContext.WriteToFile($"{log.Type}, {log.State}, {log.ToggleState}, {log.EventName}, {log.TimeStamp}\n");
     }
 
 }
